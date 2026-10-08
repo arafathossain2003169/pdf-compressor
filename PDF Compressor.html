@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF Compressor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mu:#667085;--bd:#e3e6eb;--ac:#2f6bff;--ac2:#e8efff;--ok:#12805c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#181c25;--tx:#eef1f6;--mu:#98a2b3;--bd:#2a303c;--ac:#6b93ff;--ac2:#202a45;--ok:#4ad6a3}}
+:root[data-theme="dark"]{--bg:#0f1218;--card:#181c25;--tx:#eef1f6;--mu:#98a2b3;--bd:#2a303c;--ac:#6b93ff;--ac2:#202a45;--ok:#4ad6a3}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+main{max-width:640px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:1.6rem;margin:0 0 4px}
+.sub{color:var(--mu);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:14px}
+#drop{border:2px dashed var(--bd);border-radius:14px;padding:34px 16px;text-align:center;cursor:pointer;background:var(--card);transition:.15s}
+#drop.on,#drop:hover{border-color:var(--ac);background:var(--ac2)}
+#drop b{display:block;font-size:1.05rem}
+#drop span{color:var(--mu);font-size:.9rem;word-break:break-all}
+label.l{display:block;font-weight:600;font-size:.92rem;margin:14px 0 4px}
+label.l small{font-weight:400;color:var(--mu)}
+.row{display:flex;justify-content:space-between;gap:10px}
+input[type=range]{width:100%;accent-color:var(--ac)}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mode{border:1px solid var(--bd);border-radius:10px;padding:10px 12px;cursor:pointer;font-size:.88rem}
+.mode input{display:none}
+.mode.sel{border-color:var(--ac);background:var(--ac2)}
+.mode b{display:block;font-size:.95rem}
+.mode span{color:var(--mu)}
+button{width:100%;border:0;border-radius:10px;padding:13px;font-size:1rem;font-weight:600;background:var(--ac);color:#fff;cursor:pointer;margin-top:16px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.bar{height:8px;background:var(--bd);border-radius:6px;overflow:hidden;margin-top:12px;display:none}
+.bar i{display:block;height:100%;width:0;background:var(--ac);transition:width .15s}
+#msg{color:var(--mu);font-size:.88rem;margin-top:8px;min-height:1.2em}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center}
+.stats div{background:var(--bg);border-radius:10px;padding:10px 4px}
+.stats b{display:block;font-size:1.15rem}
+.stats span{font-size:.78rem;color:var(--mu)}
+#save{display:block;text-decoration:none}
+#save button{background:var(--ok)}
+.hide{display:none}
+.note{color:var(--mu);font-size:.8rem;text-align:center;margin-top:16px}
+</style>
+</head>
+<body>
+<main>
+<h1>PDF Compressor</h1>
+<p class="sub">Shrink scanned or image-heavy PDFs right in your browser. Files never leave your device.</p>
+
+<div id="drop"><b>Drop a PDF here or tap to choose</b><span id="fname">No file selected</span></div>
+<input id="file" type="file" accept="application/pdf" class="hide">
+
+<div class="card" style="margin-top:14px">
+  <div class="modes">
+    <label class="mode sel"><input type="radio" name="mode" value="keep" checked><b>Keep text</b><span>Recompress embedded images. Text stays selectable</span></label>
+    <label class="mode"><input type="radio" name="mode" value="flat"><b>Smallest size</b><span>Turn pages into images. Text is not selectable</span></label>
+  </div>
+  <label class="l"><span class="row"><span>Max image dimension</span><small id="dv">1600 px</small></span></label>
+  <input id="dim" type="range" min="600" max="3000" step="100" value="1600">
+  <label class="l"><span class="row"><span>JPEG quality</span><small id="qv">65</small></span></label>
+  <input id="q" type="range" min="20" max="95" step="1" value="65">
+  <button id="go" disabled>Compress</button>
+  <div class="bar" id="bar"><i id="fill"></i></div>
+  <div id="msg"></div>
+</div>
+
+<div class="card hide" id="res">
+  <div class="stats">
+    <div><b id="s0">-</b><span>Original</span></div>
+    <div><b id="s1">-</b><span>Compressed</span></div>
+    <div><b id="s2">-</b><span>Saved</span></div>
+  </div>
+  <a id="save" download><button type="button">Download compressed PDF</button></a>
+</div>
+<p class="note">Supports JPEG and lossless (Flate) images, ICC color and transparency masks. CMYK images are left untouched.</p>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let buf=null,name='file.pdf',url=null;
+const mb=n=>n>=1048576?(n/1048576).toFixed(2)+' MB':(n/1024).toFixed(0)+' KB';
+const prog=(p,t)=>{$('bar').style.display='block';$('fill').style.width=(p*100)+'%';if(t)$('msg').textContent=t};
+const tick=()=>new Promise(r=>setTimeout(r));
+$('dim').oninput=e=>$('dv').textContent=e.target.value+' px';
+$('q').oninput=e=>$('qv').textContent=e.target.value;
+document.querySelectorAll('.mode input').forEach(r=>r.onchange=()=>document.querySelectorAll('.mode').forEach(m=>m.classList.toggle('sel',m.querySelector('input').checked)));
+$('drop').onclick=()=>$('file').click();
+['dragover','dragenter'].forEach(ev=>$('drop').addEventListener(ev,e=>{e.preventDefault();$('drop').classList.add('on')}));
+['dragleave','drop'].forEach(ev=>$('drop').addEventListener(ev,e=>{e.preventDefault();$('drop').classList.remove('on')}));
+$('drop').addEventListener('drop',e=>load(e.dataTransfer.files[0]));
+$('file').onchange=e=>load(e.target.files[0]);
+async function load(f){
+  if(!f||(f.type!=='application/pdf'&&!/\.pdf$/i.test(f.name))){$('msg').textContent='Please choose a PDF file.';return}
+  buf=await f.arrayBuffer();name=f.name;
+  $('fname').textContent=f.name+' ('+mb(f.size)+')';
+  $('go').disabled=false;$('res').classList.add('hide');$('msg').textContent='';
+}
+const toBlob=(c,q)=>new Promise(r=>c.toBlob(r,'image/jpeg',q));
+
+async function inflate(u8){
+  const s=new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+function unpng(d,cols,bpp){
+  const rb=cols*bpp,rows=Math.floor(d.length/(rb+1)),o=new Uint8Array(rows*rb);
+  for(let y=0;y<rows;y++){
+    const f=d[y*(rb+1)],s=y*(rb+1)+1,t=y*rb;
+    for(let x=0;x<rb;x++){
+      const a=x>=bpp?o[t+x-bpp]:0,b=y?o[t-rb+x]:0,c=(y&&x>=bpp)?o[t-rb+x-bpp]:0;
+      let v=d[s+x];
+      if(f===1)v+=a;else if(f===2)v+=b;else if(f===3)v+=(a+b)>>1;
+      else if(f===4){const p=a+b-c,pa=Math.abs(p-a),pb=Math.abs(p-b),pc=Math.abs(p-c);v+=(pa<=pb&&pa<=pc)?a:(pb<=pc?b:c)}
+      o[t+x]=v&255;
+    }
+  }
+  return o;
+}
+
+async function keepText(dim,q){
+  const {PDFDocument,PDFName,PDFRawStream,PDFArray,PDFDict,PDFNumber}=PDFLib;
+  const pdf=await PDFDocument.load(buf.slice(0),{ignoreEncryption:true});
+  const N=n=>PDFName.of(n);
+  const one=x=>(x instanceof PDFArray&&x.size()===1)?x.lookup(0):x;
+  const num=(d,k,def)=>{const v=d.lookup(N(k));return v instanceof PDFNumber?v.asNumber():def};
+  const items=[...pdf.context.enumerateIndirectObjects()].filter(([,o])=>o instanceof PDFRawStream&&o.dict.lookup(N('Subtype'))===N('Image'));
+  let done=0,changed=0,skipped=0;
+  for(const [ref,o] of items){
+    prog(done/Math.max(items.length,1),'Recompressing image '+(done+1)+' of '+items.length+'…');
+    done++;
+    if(done%3===0)await tick();
+    try{
+      const d=o.dict;
+      if(d.has(N('Mask'))||d.has(N('Decode'))||d.lookup(N('ImageMask'))===PDFLib.PDFBool.True||num(d,'BitsPerComponent',8)!==8){skipped++;continue}
+      // colour components: DeviceGray=1, DeviceRGB=3, ICCBased=N
+      let cs=one(d.lookup(N('ColorSpace'))),comps=0;
+      if(cs===N('DeviceRGB'))comps=3;else if(cs===N('DeviceGray'))comps=1;
+      else if(cs instanceof PDFArray&&cs.lookup(0)===N('ICCBased')){const st=cs.lookup(1);if(st&&st.dict)comps=num(st.dict,'N',0)}
+      if(comps!==1&&comps!==3){skipped++;continue}
+      const W=num(d,'Width',0),H=num(d,'Height',0);
+      if(!W||!H){skipped++;continue}
+      const filt=one(d.lookup(N('Filter')));
+      const s=Math.min(1,dim/Math.max(W,H));
+      const w=Math.max(1,Math.round(W*s)),h=Math.max(1,Math.round(H*s));
+      const c=document.createElement('canvas');c.width=w;c.height=h;
+      const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,w,h);
+      if(filt===N('DCTDecode')){
+        const bmp=await createImageBitmap(new Blob([o.contents],{type:'image/jpeg'}));
+        x.drawImage(bmp,0,0,w,h);bmp.close&&bmp.close();
+      }else if(filt===N('FlateDecode')){
+        if(W*H<40000){skipped++;continue}
+        let raw=await inflate(o.contents);
+        const dp=one(d.lookup(N('DecodeParms')));
+        const pred=dp instanceof PDFDict?num(dp,'Predictor',1):1;
+        if(pred>=10)raw=unpng(raw,num(dp,'Columns',W),comps);
+        else if(pred!==1){skipped++;continue}
+        if(raw.length<W*H*comps){skipped++;continue}
+        const rgba=new Uint8ClampedArray(W*H*4);
+        for(let i=0,j=0,k=0;i<W*H;i++,j+=4){
+          if(comps===3){rgba[j]=raw[k++];rgba[j+1]=raw[k++];rgba[j+2]=raw[k++]}
+          else{rgba[j]=rgba[j+1]=rgba[j+2]=raw[k++]}
+          rgba[j+3]=255;
+        }
+        const full=document.createElement('canvas');full.width=W;full.height=H;
+        full.getContext('2d').putImageData(new ImageData(rgba,W,H),0,0);
+        x.imageSmoothingQuality='high';x.drawImage(full,0,0,w,h);full.width=full.height=0;
+      }else{skipped++;continue}
+      const out=new Uint8Array(await (await toBlob(c,q/100)).arrayBuffer());
+      c.width=c.height=0;
+      if(out.length>=o.contents.length){continue}
+      // new stream keeps other entries (e.g. SMask, Intent), replaces image-specific ones
+      const st=pdf.context.stream(out);
+      const drop=['Filter','DecodeParms','ColorSpace','Width','Height','BitsPerComponent','Length'];
+      for(const [k,v] of d.entries())if(!drop.includes(k.decodeText()))st.dict.set(k,v);
+      st.dict.set(N('Width'),pdf.context.obj(w));st.dict.set(N('Height'),pdf.context.obj(h));
+      st.dict.set(N('ColorSpace'),N('DeviceRGB'));st.dict.set(N('BitsPerComponent'),pdf.context.obj(8));
+      st.dict.set(N('Filter'),N('DCTDecode'));
+      pdf.context.assign(ref,st);changed++;
+    }catch(e){skipped++}
+  }
+  prog(1,'Saving… ('+changed+' of '+items.length+' images optimized, '+skipped+' skipped)');
+  await tick();
+  return pdf.save({useObjectStreams:true});
+}
+
+async function flatten(dim,q){
+  const src=await pdfjsLib.getDocument({data:new Uint8Array(buf.slice(0))}).promise;
+  const out=await PDFLib.PDFDocument.create();
+  for(let i=1;i<=src.numPages;i++){
+    prog((i-1)/src.numPages,'Rendering page '+i+' of '+src.numPages+'…');
+    const page=await src.getPage(i),v1=page.getViewport({scale:1});
+    const s=Math.min(3,dim/Math.max(v1.width,v1.height));
+    const vp=page.getViewport({scale:s});
+    const c=document.createElement('canvas');c.width=Math.round(vp.width);c.height=Math.round(vp.height);
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+    await page.render({canvasContext:x,viewport:vp}).promise;
+    const jpg=await out.embedJpg(new Uint8Array(await (await toBlob(c,q/100)).arrayBuffer()));
+    out.addPage([v1.width,v1.height]).drawImage(jpg,{x:0,y:0,width:v1.width,height:v1.height});
+    c.width=c.height=0;page.cleanup();
+  }
+  prog(1,'Saving…');
+  return out.save();
+}
+
+$('go').onclick=async()=>{
+  $('go').disabled=true;$('res').classList.add('hide');
+  const mode=document.querySelector('input[name=mode]:checked').value;
+  const dim=+$('dim').value,q=+$('q').value;
+  try{
+    const bytes=await (mode==='keep'?keepText:flatten)(dim,q);
+    const orig=buf.byteLength,now=bytes.length,saved=now<orig;
+    if(url)URL.revokeObjectURL(url);
+    url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+    $('save').href=url;$('save').download=name.replace(/\.pdf$/i,'')+'_compressed.pdf';
+    $('s0').textContent=mb(orig);$('s1').textContent=mb(now);
+    $('s2').textContent=saved?((1-now/orig)*100).toFixed(1)+'%':'0%';
+    $('save').classList.toggle('hide',!saved);
+    $('res').classList.remove('hide');
+    const pct=saved?(1-now/orig)*100:0;
+    $('msg').textContent=!saved?'The result was not smaller, so your original is best. Try lower quality or a smaller dimension.'
+      :(mode==='keep'&&pct<10?'Done, but savings are small. Try "Smallest size" if you do not need selectable text.':'Done.');
+  }catch(e){
+    $('msg').textContent=/password|encrypt/i.test(String(e&&e.message))?'This PDF is password-protected. Remove the password first.':'Could not process this PDF (it may be damaged or very large).';
+  }
+  $('go').disabled=false;
+};
+</script>
+</body>
+</html>
